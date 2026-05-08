@@ -51,6 +51,9 @@ SECTOR_MAP = {
                 "SHR","MAJOR","RS","VGI"],
 }
 
+# Technical Analysis agent types
+TECHNICAL_AGENTS = ["TREND", "MOMENTUM", "VOLUME", "PATTERN", "CONFLUENCE"]
+
 # สร้าง reverse map: ticker → sector
 TICKER_SECTOR = {}
 for sector, tickers in SECTOR_MAP.items():
@@ -124,26 +127,75 @@ Valuation: EV/EBITDAR 5-8x airline, EV/EBITDA 8-15x hotel
 }
 
 # ── Orchestrator ────────────────────────────────────────────────────────
-ORCHESTRATOR_PROMPT = """คุณเป็น Orchestrator ที่รับคำถามและระบุ sector ของบริษัทที่ถาม
+ORCHESTRATOR_PROMPT = """คุณเป็น Orchestrator ที่รับคำถามและระบุ analyst type และ sector
 ตอบกลับเป็น JSON เท่านั้น ห้ามมีข้อความอื่น
 
 รูปแบบ:
-{"sector": "BANKING|ENERGY|PROPERTY|ICT|HEALTH|CONSUMER|INDUSTRIAL|TOURISM|GENERAL", "ticker": "TICKER หรือ null", "query_type": "ANALYSIS|QUICK_QUESTION|COMPARISON|SCREENING"}
+{"analyst_type": "FUNDAMENTAL|TECHNICAL|COMBINED", "sector": "BANKING|ENERGY|PROPERTY|ICT|HEALTH|CONSUMER|INDUSTRIAL|TOURISM|GENERAL", "tech_agent": "TREND|MOMENTUM|VOLUME|PATTERN|CONFLUENCE|null", "ticker": "TICKER หรือ null", "query_type": "ANALYSIS|QUICK_QUESTION|COMPARISON|SCREENING"}
 
-Sector mapping:
+analyst_type:
+- FUNDAMENTAL: ถามเรื่อง งบการเงิน กำไร valuation ปัจจัยพื้นฐาน อุตสาหกรรม
+- TECHNICAL: ถามเรื่อง chart indicator entry exit จุดเข้า จุดออก trend signal pattern RSI MACD EMA
+- COMBINED: ถามรวมทั้งสอง หรือถามว่า "ราคาวิ่งนำ fundamental ไหม"
+
+tech_agent (ถ้า TECHNICAL):
+- TREND: ถาม trend ทิศทาง EMA MACD ADX Ichimoku
+- MOMENTUM: ถาม RSI overbought oversold divergence Stochastic
+- VOLUME: ถาม volume OBV VWAP breakout confirm
+- PATTERN: ถาม pattern candlestick S/R Fibonacci entry setup
+- CONFLUENCE: ถาม setup ครบ ภาพรวม หรือส่ง screenshot
+
+Fundamental Sector mapping:
 - BANKING: ธนาคาร สินเชื่อ บัตรเครดิต (KBANK SCB BBL KTB BAY TTB MTC SAWAD KTC)
-- ENERGY: น้ำมัน ก๊าซ ไฟฟ้า พลังงาน (PTT PTTEP TOP IRPC GULF EA RATCH)
+- ENERGY: น้ำมัน ก๊าซ ไฟฟ้า (PTT PTTEP TOP IRPC GULF EA RATCH)
 - PROPERTY: บ้าน คอนโด นิคม ก่อสร้าง (LH AP SIRI CPN WHA AMATA STEC CK)
 - ICT: โทรคม อิเล็กทรอนิกส์ เทค (ADVANC TRUE DELTA HANA KCE COM7)
-- HEALTH: โรงพยาบาล ยา สุขภาพ (BDMS BH CHG BCH RJH)
+- HEALTH: โรงพยาบาล ยา (BDMS BH CHG BCH RJH)
 - CONSUMER: ค้าปลีก อาหาร เครื่องดื่ม (CPALL HMPRO MAKRO CPF TU OSP CBG)
-- INDUSTRIAL: อุตสาหกรรม วัสดุ ผลิต (SCC IVL TVO TASCO TOA)
+- INDUSTRIAL: อุตสาหกรรม วัสดุ (SCC IVL TVO TASCO TOA)
 - TOURISM: ท่องเที่ยว สายการบิน โรงแรม (AOT AAV CENTEL MINT ERW)
-- GENERAL: ถ้าไม่แน่ใจ หรือถามเรื่องทั่วไปที่ไม่เกี่ยวกับหุ้นเฉพาะ"""
+- GENERAL: ไม่แน่ใจ หรือถามทั่วไป"""
+
+# ── Technical Specialist Prompts ─────────────────────────────────────────
+TECHNICAL_PROMPTS = {
+    "TREND": """คุณเป็น Senior Trend Analyst เชี่ยวชาญการระบุทิศทางตลาดและ momentum
+ใช้: EMA9/21/50/200 Stack, MACD (Line/Signal/Histogram/Divergence), ADX (+DI/-DI), Ichimoku Cloud, Supertrend
+Framework: Weekly → Daily → 4H (Top-down) กำหนด Bias ก่อนเสมอ
+Output: ระบุ Major/Intermediate/Minor Trend + Verdict + Invalidation Level
+ตอบภาษาไทย กระชับ มีตัวเลขชัดเจน""",
+
+    "MOMENTUM": """คุณเป็น Senior Momentum Analyst เชี่ยวชาญการวัด momentum และหา reversal
+ใช้: RSI(14) zones+divergence, Stochastic(14,3,3), CCI(20), Williams %R, Rate of Change
+หลัก: Divergence สำคัญกว่า overbought/oversold เพียงอย่างเดียว
+Output: Momentum Score Card (0-10) + สัญญาณ + สิ่งที่ต้องระวัง
+ตอบภาษาไทย กระชับ ระบุ divergence ถ้ามี""",
+
+    "VOLUME": """คุณเป็น Senior Volume Analyst เชี่ยวชาญ volume analysis และ institutional flow
+ใช้: Volume vs MA20, OBV trend+divergence, VWAP+Bands, Volume Profile (POC/VAH/VAL), MFI, CMF
+หลัก: Volume เป็น footprint ของ smart money — อย่ามองข้าม
+Output: Volume story + Accumulation/Distribution verdict + Breakout validity
+ตอบภาษาไทย กระชับ อธิบาย volume story""",
+
+    "PATTERN": """คุณเป็น Senior Chart & Pattern Analyst เชี่ยวชาญ price action และ setup
+ใช้: Chart patterns (H&S, Double Top/Bottom, Flag, Cup&Handle, Triangle, Wedge)
+     Candlestick (Hammer, Engulfing, Doji, Morning/Evening Star, Shooting Star)
+     S/R (All-time high/low, Round numbers, Fib levels, MA, VWAP)
+     Fibonacci Retracement (38.2%, 50%, 61.8%) และ Extension (127.2%, 161.8%)
+Output: Pattern + Trade Setup (Entry/Stop/Target 1-3) + Setup Score (0-100) + R/R
+ตอบภาษาไทย ระบุ entry เงื่อนไข stop loss และ target ชัดเจนเสมอ""",
+
+    "CONFLUENCE": """คุณเป็น Senior Multi-Timeframe Analyst ที่รวม signal ทุกด้าน
+Framework: Monthly → Weekly → Daily → 4H → 1H (Top-down analysis)
+Confluence Matrix: Trend(+30) + Momentum(+25) + Volume(+25) + Pattern(+20) = max 100
+Price Discovery: วิเคราะห์ว่าราคาวิ่งนำหรือตาม fundamental
+ถ้ารับ screenshot: อ่าน price action + indicator + pattern แล้วให้ entry/stop/target
+Output: Full Technical Report + Confluence Score + Trade Setup + Price vs Fundamental assessment
+ตอบภาษาไทย ครบทุกด้าน มีตัวเลขชัดเจน สรุป Buy/Hold/Sell พร้อมเหตุผล""",
+}
 
 
 async def call_orchestrator(question: str, client: httpx.AsyncClient) -> dict:
-    """ให้ Orchestrator ระบุ sector และประเภทคำถาม"""
+    """ให้ Orchestrator ระบุ analyst type, sector, และ tech agent"""
     try:
         r = await client.post(
             "https://api.anthropic.com/v1/messages",
@@ -164,19 +216,45 @@ async def call_orchestrator(question: str, client: httpx.AsyncClient) -> dict:
         text = text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
     except Exception:
-        return {"sector": "GENERAL", "ticker": None, "query_type": "GENERAL"}
+        return {"analyst_type": "GENERAL", "sector": "GENERAL",
+                "tech_agent": None, "ticker": None, "query_type": "GENERAL"}
 
 
-async def call_specialist(question: str, sector: str,
-                           ticker: str | None,
+async def call_specialist(question: str, routing: dict,
                            client: httpx.AsyncClient) -> str:
-    """เรียก Specialist Agent ตาม sector"""
-    system_prompt = SECTOR_PROMPTS.get(sector, SECTOR_PROMPTS["GENERAL"])
+    """เรียก Specialist Agent ตาม routing"""
+    analyst_type = routing.get("analyst_type", "FUNDAMENTAL")
+    sector       = routing.get("sector", "GENERAL")
+    tech_agent   = routing.get("tech_agent", "CONFLUENCE")
+    ticker       = routing.get("ticker")
+
+    # เลือก system prompt
+    if analyst_type == "TECHNICAL":
+        system_prompt = TECHNICAL_PROMPTS.get(
+            tech_agent or "CONFLUENCE",
+            TECHNICAL_PROMPTS["CONFLUENCE"]
+        )
+    elif analyst_type == "COMBINED":
+        # รวม Technical Confluence + Fundamental
+        fund_prompt = SECTOR_PROMPTS.get(sector, SECTOR_PROMPTS["GENERAL"])
+        tech_prompt = TECHNICAL_PROMPTS["CONFLUENCE"]
+        system_prompt = (
+            f"{tech_prompt}\n\n"
+            f"นอกจากนี้คุณยังมีความรู้ด้าน Fundamental Analysis:\n{fund_prompt}"
+        )
+    else:
+        system_prompt = SECTOR_PROMPTS.get(sector, SECTOR_PROMPTS["GENERAL"])
 
     # เพิ่ม context ถ้ารู้ ticker
     user_msg = question
     if ticker:
-        user_msg = f"[หุ้น: {ticker} | Sector: {sector}]\n\n{question}"
+        context = f"[หุ้น: {ticker}"
+        if analyst_type in ("TECHNICAL", "COMBINED") and tech_agent:
+            context += f" | Technical Agent: {tech_agent}"
+        if analyst_type in ("FUNDAMENTAL", "COMBINED"):
+            context += f" | Sector: {sector}"
+        context += "]"
+        user_msg = f"{context}\n\n{question}"
 
     try:
         r = await client.post(
@@ -228,43 +306,47 @@ async def get_updates(offset: int, client: httpx.AsyncClient) -> list[dict]:
 
 
 SECTOR_EMOJI = {
-    "BANKING":    "🏦",
-    "ENERGY":     "⚡",
-    "PROPERTY":   "🏠",
-    "ICT":        "📱",
-    "HEALTH":     "🏥",
-    "CONSUMER":   "🛒",
-    "INDUSTRIAL": "🏭",
-    "TOURISM":    "✈️",
-    "GENERAL":    "📊",
+    "BANKING":    "🏦", "ENERGY":     "⚡", "PROPERTY":   "🏠",
+    "ICT":        "📱", "HEALTH":     "🏥", "CONSUMER":   "🛒",
+    "INDUSTRIAL": "🏭", "TOURISM":    "✈️", "GENERAL":    "📊",
 }
-
+TECH_EMOJI = {
+    "TREND":       "📈", "MOMENTUM":   "⚡", "VOLUME":     "📊",
+    "PATTERN":     "🕯️", "CONFLUENCE": "🔢",
+}
 SECTOR_TH = {
-    "BANKING":    "Banking & Finance",
-    "ENERGY":     "Energy & Commodity",
-    "PROPERTY":   "Property & Construction",
-    "ICT":        "Technology & ICT",
-    "HEALTH":     "Healthcare & Hospital",
-    "CONSUMER":   "Consumer & Retail",
-    "INDUSTRIAL": "Industrial & Manufacturing",
-    "TOURISM":    "Tourism & Airline",
+    "BANKING":    "Banking & Finance",    "ENERGY":     "Energy & Commodity",
+    "PROPERTY":   "Property",             "ICT":        "Technology & ICT",
+    "HEALTH":     "Healthcare",           "CONSUMER":   "Consumer & Retail",
+    "INDUSTRIAL": "Industrial",           "TOURISM":    "Tourism & Airline",
     "GENERAL":    "General Analysis",
+}
+TECH_TH = {
+    "TREND":       "Trend Analysis",      "MOMENTUM":   "Momentum Analysis",
+    "VOLUME":      "Volume Analysis",     "PATTERN":    "Pattern & Setup",
+    "CONFLUENCE":  "Multi-TF Confluence",
 }
 
 
 async def handle_message(text: str, chat_id: str,
                           client: httpx.AsyncClient):
     """จัดการ message จาก user"""
-    # กรองคำสั่ง
     if text.strip() in ["/start", "/help"]:
         await send_telegram(
             "🤖 <b>Analyst Bot พร้อมให้บริการ</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "พิมพ์ถามได้เลย เช่น:\n"
+            "<b>📊 Fundamental Analyst:</b>\n"
             "• <code>วิเคราะห์ KBANK</code>\n"
             "• <code>PTT น่าซื้อไหม</code>\n"
-            "• <code>เปรียบเทียบ BDMS กับ BH</code>\n"
-            "• <code>หุ้น property ตัวไหนดี</code>\n\n"
+            "• <code>เปรียบเทียบ BDMS กับ BH</code>\n\n"
+            "<b>📈 Technical Analyst:</b>\n"
+            "• <code>trend ของ PTT เป็นยังไง</code>\n"
+            "• <code>RSI KBANK overbought ไหม</code>\n"
+            "• <code>volume AOT confirm breakout ไหม</code>\n"
+            "• <code>pattern Delta คืออะไร entry ที่ไหน</code>\n"
+            "• ส่ง screenshot chart มาวิเคราะห์ได้เลย\n\n"
+            "<b>🔀 Combined:</b>\n"
+            "• <code>ราคา PTTEP วิ่งนำ fundamental ไหม</code>\n\n"
             "🏦 Banking  ⚡ Energy  🏠 Property\n"
             "📱 ICT  🏥 Healthcare  🛒 Consumer\n"
             "🏭 Industrial  ✈️ Tourism",
@@ -272,35 +354,41 @@ async def handle_message(text: str, chat_id: str,
         )
         return
 
-    # แจ้งว่ากำลังวิเคราะห์
     await send_telegram("🔍 กำลังวิเคราะห์...", chat_id, client)
 
     # Step 1: Orchestrator routing
-    routing = await call_orchestrator(text, client)
-    sector  = routing.get("sector", "GENERAL")
-    ticker  = routing.get("ticker")
+    routing      = await call_orchestrator(text, client)
+    analyst_type = routing.get("analyst_type", "FUNDAMENTAL")
+    sector       = routing.get("sector", "GENERAL")
+    tech_agent   = routing.get("tech_agent")
+    ticker       = routing.get("ticker")
 
     # Step 2: Specialist analysis
-    answer = await call_specialist(text, sector, ticker, client)
+    answer = await call_specialist(text, routing, client)
 
-    # Step 3: Format และส่งกลับ
-    emoji    = SECTOR_EMOJI.get(sector, "📊")
-    sector_th = SECTOR_TH.get(sector, "General")
+    # Step 3: Format header
+    if analyst_type == "TECHNICAL" and tech_agent:
+        emoji     = TECH_EMOJI.get(tech_agent, "📈")
+        label     = TECH_TH.get(tech_agent, "Technical")
+        header    = f"{emoji} <b>{label}</b>"
+    elif analyst_type == "COMBINED":
+        header    = f"🔀 <b>Combined Analysis</b>"
+    else:
+        emoji     = SECTOR_EMOJI.get(sector, "📊")
+        label     = SECTOR_TH.get(sector, "Fundamental")
+        header    = f"{emoji} <b>{label} Specialist</b>"
 
-    header = (
-        f"{emoji} <b>{sector_th} Specialist</b>"
-        + (f" — {ticker}" if ticker else "")
-        + "\n━━━━━━━━━━━━━━━━━━━━\n"
-    )
+    if ticker:
+        header += f" — {ticker}"
+    header += "\n━━━━━━━━━━━━━━━━━━━━\n"
 
-    # Telegram มี limit 4096 chars
     full_msg = header + answer
     if len(full_msg) > 4000:
         full_msg = full_msg[:3990] + "\n...[ตัดทอน]"
 
     await send_telegram(full_msg, chat_id, client)
     print(f"[{datetime.now(BANGKOK_TZ).strftime('%H:%M')}] "
-          f"{sector} {ticker or ''} → answered")
+          f"{analyst_type} {tech_agent or sector} {ticker or ''} → answered")
 
 
 # ── Main Loop ───────────────────────────────────────────────────────────
